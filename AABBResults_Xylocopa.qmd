@@ -1,0 +1,512 @@
+---
+title: "AABB Results"
+author: "Jenan El-Hifnawi"
+format: 
+ html: 
+    title-block-banner: true
+    theme: pulse
+editor: visual
+echo: false
+---
+
+# Outline:
+
+a\. Universal data wrangling
+
+1.  Generating family level IDs
+2.  Merging in survey conditions information and family level IDs
+3.  Applying universal filters
+    1.  Remove any surveys missing crucial data
+    2.  Remove all surveys with under 5 bee visits
+    3.  Remove all surveys with under 5 flower genera
+
+b\. Subsetting the dataset: Seasonal Chunks
+
+c\. Summary tables
+
+1.  Harmon-Threatt model (@tbl-harmon_threatt_model)
+
+2.  Sam and Jenan Pilot analysis (@tbl-pilot_analysis)
+
+3.  Combined summary table of all "preference" statistics (@tbl-combined_summary)
+
+d\. Plots
+
+1.  Box plot - Loop through BBCount, CorrBBCount, and BScore (Figures 1, 2, and 3)
+
+2.  Line plot - Plot visitation in seasonal chunks (@fig-linegraph_corrbbcount)
+
+*This document outlines the data analysis process for [Ask A Bumble Bee.](https://u.osu.edu/askabumble/) It includes various tables, figures, and the code chunks involved in the creation of these objects. If you have any questions, please contact bumblebeecount\@gmail.com .*
+
+*Note to Sam and Jarrod* - I'm making this document in a program called Quarto through RStudio. It allows me to create a somewhat "live" document by having the tables and figures be calculated continuously based on whatever datafile I load in the document. Then, when I report various values in paragraph format, I can call to those calculated values. This way, when we get new data, I can just add it to the datafile which I am calling in, and all the tables, graphs, and summary paragraphs will automatically update!! Woohoo!!
+
+```{r}
+#| label: load_packages_and_functions
+#| warning: false
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,
+               patchwork,
+               here,
+               taxize,
+               flextable,
+               cowplot,
+               writexl,
+               viridis,
+               update = FALSE)
+
+if(!exists("Xylocopaharmonthreattmodeltable", mode = "function")) source(here::here ("functions",
+  "Xylocopaharmonthreattmodeltable.r"))
+
+
+
+if(!exists("pilotanalysistable", mode = "function")) source(here::here("functions", 
+                                                                    "xylocopapilotanalysistable.r"))
+
+
+```
+
+```{r}
+#| label: load_cleanedish_data_files
+#| warning: false
+
+genusleveldatafileinprogress <-
+  read_csv(here("data",
+                "cleaned.data",
+                "FinalGenusLevelAnalysisFileReRankedFlRank.csv"),
+           name_repair = "universal")
+
+genusleveldatafileinprogressunfiltered <- 
+  read_csv(here("data",
+               "cleaned.data",
+               "FinalGenusLevelDatafileUnfiltered.csv"))
+
+ rawsurveyconditionstable <-
+  read_csv(here("data",
+                "raw.data",
+                "SurveyConditionsTableBetterDates.csv"),
+           name_repair = "universal")
+ 
+ BeeTable <- #7300 rows 
+  read_csv(here("data",
+                "raw.data",
+                "BeeTable29SEP23.csv"),
+           name_repair = "universal")
+ 
+ genustofamilytable <-
+  read_csv(here("data",
+                "cleaned.data",
+                "genustofamilytable.csv"),
+           name_repair = "universal") %>%
+  mutate(FGenus = paste0(Genus," species"))
+
+  FlowerTableAllDupesPresent <- 
+      read_csv(here("data",
+                  "raw.data",
+                  "FINALFLOWERTABLE_GENUS.csv"),
+             name_repair = "universal")
+```
+
+# **Universal Data Wrangling**
+
+Here, I'm merging in my surveys conditions data, adding in a bee score field, adding family IDs, and filtering out surveys that should be universally thrown out! Surveys removed here include those which had under 5 flower genera, under 5 bees, or the errorcode "NoFRHASBEES". This error code indicates that at least one plant in the survey which was visited by a bee was missing a floral rank value, making the survey unusable. I save the final nice table out at the end of this chunk.
+
+### Taxize: Adding family level IDs
+
+```{r}
+#| label: taxize_adding_family_names
+#| warning: false
+#| message: false
+#| echo: true
+
+# cleandatawithfamilyTEST <- genusleveldatafileinprogress %>%
+#   tidyr::separate(FGenus, 
+#                   c("Genus", "Species"), 
+#                    sep = " ", 
+#                    remove = TRUE) %>%
+#   dplyr::filter(SurveyNum == 2) %>%
+#   dplyr::mutate(Family = tax_name(Genus, get = 'family', db = 'ncbi')$family) %>%
+#   dplyr::select(-Species)
+
+#Because Taxize required an API key for large requests (and frequently crashes even with that key), 
+#I am only including the code to generate a family column for a single survey. 
+#I was able to get a family column for the entire dataset, but it required breaking my requests up into around 15 smaller requests, which I will not ask you to suffer through! Here I read in the resulting table which associates one family name for each genus in my list: 
+
+```
+
+### Universal merging, mutating, and filtering
+
+```{r}
+#| label: universal_data_wrangling
+#| warning: false
+#| echo: true
+#| code-fold: true
+
+
+#NOTE!!! THIS NEEDS TO BE REPAIRED! I NEED TO MERGE IN THE FGENUS COLUMN TO THE BEE TABLE THEN USE THAT TO MERGE INTO THE XYLOCLEANEDDATASET! BUT I WONT DO THT BC I DID IT RIGHT IN THE ALL SPECIES LOOP SO THIS IS NOT WORTHWHILE! 
+
+CarpenterBeeTable <- 
+  BeeTable %>%
+  filter(grepl("Xylocopa", BSpecies)) %>% #1028 rows 
+  merge(FlowerTableAllDupesPresent, by = c("SurveyNum", "FNum"), all.x = TRUE) %>%
+  mutate(BSpecies = "Xylocopa species") %>%
+  select(!c("IDnew","CountofLots":"corrFloralRank", "Sex","FNum")) %>%
+  group_by(SurveyNum, FGenus) %>%
+  mutate(Count = sum(Count)) %>%
+  ungroup() %>%
+  select(!ID) %>%
+  distinct() #860 rows
+
+xylocleanedgenusleveldataset <- #returns 11542 rows, math predicts 11542! 
+  genusleveldatafileinprogressunfiltered %>%
+  full_join(genustofamilytable, by = "FGenus") %>%
+  merge(CarpenterBeeTable, by = c("SurveyNum", "FGenus"), all.x = TRUE) %>%
+  replace(is.na(.), 0) %>%
+  left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  select(!BSpecies) %>%
+  group_by(SurveyNum) %>%
+  rename(CBcount = Count) %>%
+  mutate(SumCBcount = sum(CBcount)) %>%
+  filter(SumCBcount > 0) %>%
+  mutate(CorrCBcount = CBcount / SumCBcount) %>%
+  mutate(CorrRankAvgFlRankXCorrCBcount = CorrRankAvgFlRank * CorrCBcount) %>%
+  mutate(SeasonalChunk = case_when(
+    month %in% c(2, 3, 4, 5) ~ 1,
+    month %in% c(6, 7, 8) ~ 2,
+    month %in% c(9, 10, 11) ~ 3)) %>%
+  select(ID:ErrorCode,
+         SeasonalChunk,
+         SurveyNum,
+         Family,
+         FGenus:RankAvgFloralRank,
+         CorrRankAvgFlRank:CorrBBCount,
+         CBcount:CorrRankAvgFlRankXCorrCBcount
+          ) %>%
+  filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  add_count(FGenus, name = "FlowerSampleSize")%>%
+  group_by(SurveyNum) %>%
+  mutate("SumofBBcount" = sum(BBcount)) %>% #to verify that the filter worked
+  mutate("NumberofFlowers" = n()) %>% #to verify that the filter worked
+  filter(NumberofFlowers > 4) %>% #survey 88 should no longer be present
+  ungroup()
+
+#given that this is a fairly nice and "final" dataset, let me write it out to my final data files folder - 
+
+#write_csv(cleanedgenusleveldataset,
+#          here("data",
+#               "cleaned.data",
+#                "FinalGenusLevelDataFile.UniversalFiltersApplied.csv"))
+
+```
+
+```{r}
+#| label: testing_my_universal_filters
+#| warning: false
+
+TEST.cleanedgenusleveldataset <- #returns 11542 rows, math predicts 11542! 
+  genusleveldatafileinprogress %>%
+  dplyr::left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::mutate(CorrRankAvgFlRankXCorrBBCount = CorrRankAvgFlRank * CorrBBCount) %>%
+  dplyr::select(ID:ErrorCode,
+                SurveyNum:RankAvgFloralRank,
+                CorrRankAvgFlRank:CorrBBCount,
+                CorrRankAvgFlRankXCorrBBCount) %>%
+  dplyr::filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")%>%
+  dplyr::group_by(SurveyNum)  %>%
+  dplyr::filter(sum(BBcount) > 4) %>% #Remove surveys with under 5 bees
+  dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% #to verify that the filter worked
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to verify that the filter worked
+  dplyr::filter(NumberofFlowers > 4) %>% #survey 88 should no longer be present
+  dplyr::ungroup()
+
+Subset.SurveysWithUnder5Flowers <- #returns 75 obs (28 surveys making up 75 rows)
+  genusleveldatafileinprogress %>%
+  dplyr::left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::mutate(CorrRankAvgFlRankXCorrBBCount = CorrRankAvgFlRank * CorrBBCount) %>%
+  dplyr::select(ID:ErrorCode,
+                SurveyNum:RankAvgFloralRank,
+                CorrRankAvgFlRank:CorrBBCount,
+                CorrRankAvgFlRankXCorrBBCount) %>%
+  dplyr::filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")%>%
+  dplyr::group_by(SurveyNum)  %>%
+  dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% 
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to verify that the filter worked
+  dplyr::filter(NumberofFlowers < 5) %>% 
+  dplyr::ungroup() %>%
+  dplyr::mutate(Filtered.Because = "Under5Flowers")
+
+Subset.SurveysWithUnder5Bees <- #returns 2289 obs, 
+  genusleveldatafileinprogress %>%
+  dplyr::left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::mutate(CorrRankAvgFlRankXCorrBBCount = CorrRankAvgFlRank * CorrBBCount) %>%
+  dplyr::select(ID:ErrorCode,
+                SurveyNum:RankAvgFloralRank,
+                CorrRankAvgFlRank:CorrBBCount,
+                CorrRankAvgFlRankXCorrBBCount) %>%
+  dplyr::filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")%>%
+  dplyr::group_by(SurveyNum)  %>%
+  dplyr::filter(sum(BBcount) < 5) %>% #Remove surveys with under 5 bees
+  dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% #to verify that the filter worked
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to keep identical columns with the other tbl
+  dplyr::ungroup() %>%
+  dplyr::mutate(Filtered.Because = "Under5Bees")
+
+
+Summary.Subset.SurveysWithUnder5Flowers <- #returns 28 surveys
+  Subset.SurveysWithUnder5Flowers %>%
+  summarise(.by = SurveyNum,
+            NumberFlowers = n())
+
+Summary.Subset.SurveysWithUnder5Bees <- #returns 146 surveys
+  Subset.SurveysWithUnder5Bees %>%
+  summarise(.by = SurveyNum,
+            NumberFlowers = n())
+
+#Now lets see what surveys were removed for what reason
+
+Subset.SurveysWithUnder5BeesORUnder5Flowers <- 
+  Subset.SurveysWithUnder5Bees %>%
+  rbind(Subset.SurveysWithUnder5Flowers)
+
+Summary.Subset.SurveysWithUnder5BeesORUnder5Flowers <- #returns 164 surveys (some overlap)
+  Subset.SurveysWithUnder5BeesORUnder5Flowers %>%
+  summarise(.by = SurveyNum,
+            NumberFlowers = n(),
+            SumofBBCount = sum(BBcount),
+            ErrorCode = first(ErrorCode))
+
+TEST <- Summary.Subset.SurveysWithUnder5BeesORUnder5Flowers %>% 
+  left_join(genusleveldatafileinprogress, by = "SurveyNum")
+
+#Yay! This last line returns 2343 rows, which shows that the number of rows needing to be removed (because they are part of surveys with either under 5 bees or under 5 flowers) is equal to the number of rows subtracted by the filter (good!)  
+```
+
+# **Summary Tables**
+
+#### Fowler-adapted Harmon-Threatt table
+
+This table is based on Jarrod Fowler's adaptation of a preference model from [Harmon-Threatt et. al. 2016](doi:10.5061/dryad.6kn05)
+
+```{r}
+#| label: tbl-harmon_threatt_model
+#| tbl-cap: Jarrod Fowler's adaptation of a preference model from Harmon-Threatt et. al. 2016. This table includes all genera present on 30 or more surveys, sorted in descending order by the final "preference" value. 
+
+finalharmonthreattmodeltable<- xylocopaharmonthreattmodeltable(xylocleanedgenusleveldataset)
+
+ finalharmonthreattmodeltable %>% 
+ dplyr::filter(NumberSurveys > 29) %>%
+ dplyr::arrange(vRank) %>%
+ flextable::flextable()
+
+```
+
+#### Pilot Analysis Table
+
+@tbl-pilot_analysis explained:
+
+*NumberSurveys* - The number of surveys that a flower genus appeared in.
+
+*Avg.Corr.RankAvg.FloralRank* - Average corrected rank-average of floral rank. Here we took the rank-average of floral rank on a per survey basis, and then "corrected" that value by scaling it between 0 and 10 with the following calculation:$$CorrRankAvgFlRank = RankAvgFloralRank * 10/(max(RankAvgFloralRank))$$
+
+The value displayed here is the average of this value across all surveys.
+
+*AvgBBCount* - Average bumble bee count - Total number of bumble bees found on a flower genus across all surveys, divided by the total number of surveys that the flower genus appeared in.
+
+*AvgCorrBBCount* - Average corrected bumble bee count. The number of bumble bees on a flower genus in one survey, divided by the total number of bumble bees in that survey. The value displayed here is the average of this value across all surveys.
+
+*BBScore.CorrRankAvgFlRankXCorrBBCount* - Average of Adjusted bumble bee count times adjusted floral rank - Bumble bee count multiplied by adjusted floral rank on a per survey basis. This value accounts for both floral abundance and bee visitation, with highest numbers representing plants with lots of bees despite low abundance and lowest numbers representing plants with few visitations despite high abundance.
+
+```{r}
+#| label: tbl-pilot_analysis
+#| warning: false
+#| code-fold: true
+#| tbl-cap: This table includes all values involved in the creation of Jenan and Sam's "BeeScore" value. 
+
+JenanAndSamPilotAnalysisTable <- xylocopapilotanalysistable(xylocleanedgenusleveldataset)
+
+  JenanAndSamPilotAnalysisTable %>% 
+  dplyr::filter(NumberSurveys > 29) %>%
+  flextable::flextable()
+
+```
+
+#### Combined Summary Table
+
+The "preference" metrics include:
+
+a)  ProportionSurveysWithVisitation: Number of surveys with at least one bumble bee visit) / (total number of surveys with the plant genus
+
+b)  BBScore.CorrRankAvgFlRankXCorrBBCount - Derived from Sam and Jenan's pilot analysis method
+
+c)  JarrodModel.BBScore - vRank derived from Fowler adapted Harmon-Threatt model.
+
+```{r}
+#| label: tbl-combined_summary
+#| warning: false
+#| code-fold: true
+#| tbl-cap: A compilation of various "preference" metrics and a couple key values involved in their creation. 
+
+####first, with all the data, including genera on 30 or more surveys. No filters for seasonality, number of plants, number of bees, etc. 
+
+entiregenuslevelanalysistable <-
+  xylocleanedgenusleveldataset %>%
+  dplyr::summarise(
+    .by = FGenus,
+    NumberSurveys = n(),
+    #NumberSurveysWithVisitation = sum(CBcount >0),
+    ProportionSurveysWithVisitation = sum(CBcount > 0) / n(),
+    #AvgCorrFloralRank = mean(corrFloralRank),
+    #AvgRankAvgFloralRank = mean(RankAvgFloralRank),
+    Avg.Corr.RankAvg.FloralRank = mean(CorrRankAvgFlRank),
+    SumCBCount = sum(CBcount),
+    AvgCBCount = mean(CBcount),
+    AvgCorrCBCount = mean(CorrCBcount),
+    CBScore.CorrRankAvgFlRankXCorrCBCount = mean(CorrRankAvgFlRankXCorrCBcount),
+    StandardDeviationCBScore = sd(CorrRankAvgFlRankXCorrCBcount, na.rm = TRUE),
+    StandardErrorCBScore = (sd(CorrRankAvgFlRankXCorrCBcount, na.rm = TRUE)) /
+      sqrt(NumberSurveys)) %>%
+  dplyr::mutate(across(where(is.numeric),
+                       ~ round(., 2))) %>% # round values to make them presentable)
+  dplyr::arrange(desc(CBScore.CorrRankAvgFlRankXCorrCBCount)) %>%
+  dplyr::left_join(., finalharmonthreattmodeltable, by = "FGenus") %>%
+  dplyr::select(c(FGenus:StandardErrorCBScore, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Fowler.HarmonThreattModel.vRank" = "vRank")
+
+  entiregenuslevelanalysistable %>% 
+  dplyr::filter(NumberSurveys > 29) %>%
+  flextable::flextable()
+
+```
+
+```{r}
+#| label: saving_summary_tables_out
+#| warning: false
+#| code-fold: true
+
+combined.summary.tables.list <-
+  list(
+    "xylocopaentiredataset" = entiregenuslevelanalysistable
+  )
+
+writexl::write_xlsx(combined.summary.tables.list,
+                   here("data",
+                       "summarized.data", 
+                       "xylocopa.summarytables.genuslevel.universalfiltersapplied.xlsx")) 
+
+
+```
+
+# **Plots**
+
+## **Boxplots**
+
+```{r}
+#| label: fig-boxplotplaying
+#| warning: false
+#| code-fold: true
+#| fig-cap: A series of boxplots based on BBCount, CorrBBCount, and CorrRankAvgFlRankXCorrBBCount. The boxplots are laid over the point distributions, which are color coded by the Month the survey was completed in. 
+
+dat <- cleanedgenusleveldataset
+AABB.cat.x.var <- c("FGenus")
+AABB.cont.y.var <- c("BBcount", "CorrBBCount", "CorrRankAvgFlRankXCorrBBCount")
+
+for (i in seq_along(AABB.cont.y.var)) {
+  
+  TopGenera <- 
+  dat %>%
+  group_by(FGenus) %>% 
+  summarise(AverageSummaryMetric = mean(!!sym(AABB.cont.y.var[i])), 
+  FlowerSampleSize = n()) %>%
+  arrange(desc(AverageSummaryMetric)) %>%
+  filter(FlowerSampleSize > 29) %>%
+  slice_head(n = 10)
+  
+  TopGeneraVector <- TopGenera$FGenus
+  
+  filtereddat <-filter(dat, FGenus %in% TopGeneraVector)
+  
+    assign(
+    paste0("y.loop.boxplot.", AABB.cont.y.var[i], ".", AABB.cat.x.var),
+    ggplot(filtereddat,
+           aes(y = .data[[AABB.cat.x.var]],
+               x = .data[[AABB.cont.y.var[i]]])) +
+      geom_jitter(aes(color = month)) +
+      geom_boxplot(na.rm = TRUE, alpha = .5, outlier.shape = NA) +
+      theme_classic() +
+      labs(y = NULL) +
+      scale_color_viridis_c(option = "magma"))
+
+  print(get(paste0("y.loop.boxplot.", AABB.cont.y.var[i], ".", AABB.cat.x.var)))
+  
+}
+
+#boxplot.adjustedaxisbbscore <- y.loop.boxplot.CorrRankAvgFlRankXCorrBBCount.FGenus +
+ # scale_x_continuous(limits = c(min = 0, max = 1.5))
+
+```
+
+## **Lineplot**
+
+```{r}
+#| label: fig-linegraph_corrbbcount
+#| warning: false
+#| code-fold: true
+#| fig-cap: line graph of BBScore highlighting how use changes throughout the bumble bee season 
+
+lineplot.BBScore <- 
+  cleanedgenusleveldataset %>% 
+  filter(FGenus %in% c("Erigeron species", "Pycnanthemum species", "Taraxacum species", "Monarda species", "Glechoma species")) %>%
+  #group_by(FGenus) %>%
+  ggplot(aes(x = SeasonalChunk, y = CorrRankAvgFlRankXCorrBBCount, color = FGenus)) + 
+  theme_classic() +
+  geom_point(stat = "summary", fun.y = "mean") +
+  geom_line(stat = "summary", fun.y = "mean") +
+   geom_errorbar(
+    stat = "summary", fun.ymax = "mean", fun.ymin = "mean",
+    width = 0.2) +  # Adjust the width of the error bars)
+  scale_x_continuous(
+    breaks = c(1, 2, 3),  # Set the breaks at 1, 2, and 3
+    labels = c("Spring", "Summer", "Fall")  # Set the labels for the breaks
+  ) +
+  labs(x = NULL, y = "BBScore") +
+    theme_classic() +
+    scale_color_viridis_d(option = "magma", 
+                        begin = .1, 
+                       end = .9)
+
+
+lineplot.BBScore
+```
+
+## **Saving Plots**
+
+```{r}
+#| label: saving_plots
+#| warning: false
+#| echo: true
+#| code-fold: true
+
+patchwork.multiplot.boxplots <- 
+  ((y.loop.boxplot.BBcount.FGenus|y.loop.boxplot.CorrBBCount.FGenus|y.loop.boxplot.CorrRankAvgFlRankXCorrBBCount.FGenus)) +
+  #plot_layout(guides = 'collect') + # combine the legends
+  plot_annotation(tag_levels = 'A') 
+ # theme(legend.position ="bottom") 
+
+## Add & theme_classic() to change the theme for all plots
+
+ggsave(filename = here("plots",
+                      "patchwork.multiplot.boxplots.12.by.6.png"), 
+       patchwork.multiplot.boxplots,
+       dpi = 400, width = 12, height = 6, units = "in", bg = "white")
+
+# Saving the BBScore line plot
+
+ggsave(filename = here("plots",
+                      "lineplot.BBScore.6.by.4.png"), 
+       lineplot.BBScore,
+       dpi = 400, width = 6, height = 4, units = "in", bg = "white")
+```

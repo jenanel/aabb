@@ -1,0 +1,1067 @@
+---
+title: "AABB Results"
+author: "Jenan El-Hifnawi"
+format: 
+ html: 
+    title-block-banner: true
+    theme: sandstone
+editor: visual
+echo: false
+---
+
+Future goals:
+
+-   include the complete process of data cleaning and analysis!
+
+-   Pie chart of family level visitation for bumbles vs carpenters
+
+-   maybe plot some particularly interesting species
+
+-   loop through various filtered datasets to get a variety of final tables and plots with each of the filters applied!
+
+-   Explore other interesting trends using loops to automate the process
+
+-   make a phenological plot? Need to hammer out details.
+
+```{r}
+#Checking if we need the <5 bees filter! Code pulled from the AABBResults_SpeciesLevelPlantsAndBees.qmd file. 
+
+BombusSummaryTableUnfiltered <- read_xlsx(here("data",
+                                               "summarized.data", 
+                                           "BombusAndXylocopaSpeciesLevelSummaryTables.xlsx")) 
+
+test.filteredcolumnsforcomparison <- finalpilotanalysistables[["AllBombus"]] %>%
+  select(c(FSpecies, NumberSurveys, AvgBeeScore, BulkBeeScore)) %>%
+  rename_with(~paste0(., ".filt"))
+
+combinedsummarytable.AllBombus <-
+  BombusSummaryTableUnfiltered %>% 
+    dplyr::left_join(test.filteredcolumnsforcomparison, by = c("FSpecies" = "FSpecies.filt"))
+
+writexl::write_xlsx(combinedsummarytable.AllBombus,
+                    here("data",
+                        "summarized.data", 
+                        "BombusSpeciesLevelSummaryTable.Testof5orMoreBeeFilter.xlsx")) 
+```
+
+```{r}
+#checking the old hamon threatt model vs the updated version! Conclusion: Use the new corrected version! I pulled the below comment and code from my AABBResults_SpeciesLevelBees.qmd file after deciding what to do. 
+
+#the below testing was done by running the harmonthreattmodeltable function on the AllBombus and AllXylocopa tables PRIOR TO UPDATING THE FUNCTION!! I then saved these outputs as combinedsummarytable.AllBombus and combinedsummarytable.AllXylocopa. Then, I updated the function, reran it, and bound the previous combinedsummarytables to the vRank column of the harmon threatt summary tables from the new, corrected function. The change I made in the function was to change dplyr::mutate(fn = NumberSurveys * MeanCorrFlRank)  to  dplyr::mutate(fn = NumberSurveys * (10 - MeanCorrFlRank)). I did this to apply the effect of NumberSurveys and MeanCorrFlRank in the correct direction. fn will be the denominator of v (the value we rank in vRank), so the goal of this term is presumably to shrink the "v" value of plants which are highly abundant, either by being in many surveys, by consistantly having a high floral rank, or both. A high value for # surveys indicates that more of that plant species was availible, increasing the denominator and shrinking the "v" value as expected. Floral rank is the opposite: a smaller value of floral rank indicates that there is more of that plant species available. This means that prior to changing FloralRank to (10-FloralRank) in this equation, plants which were highly abundant had higher "v" values while rarer plants had lower "v" values which is the opposite of what we want!  The test confirmed this error, because after updating the function, vRank aligns perfectly with BulkBeeScore, which is essentially the same equation. 
+
+Test.UpdatesToHarmonThreattModel.AllBombus <- 
+  combinedsummarytable.AllBombus %>%
+  dplyr::left_join(harmonthreatt.AllBombus, by = "FGenus") %>%
+  dplyr::select(c(FGenus:Fowler.HarmonThreattModel.vRank, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Corrected.vRank" = "vRank")
+
+Test.UpdatesToHarmonThreattModel.AllXylocopa <- 
+  combinedsummarytable.AllXylocopa %>%
+  dplyr::left_join(harmonthreatt.AllXylocopa, by = "FGenus") %>%
+  dplyr::select(c(FGenus:Fowler.HarmonThreattModel.vRank, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Corrected.vRank" = "vRank")
+
+combined.testsummary.tables.list <-
+  list(
+    "combinedtestsummarytable.AllBombus" = Test.UpdatesToHarmonThreattModel.AllBombus,
+    "combinedtestsummarytable.AllXylocopa" = Test.UpdatesToHarmonThreattModel.AllXylocopa
+  )
+
+writexl::write_xlsx(combined.testsummary.tables.list,
+                   here("data",
+                       "summarized.data", 
+                       "Test.UpdatesToHarmonThreattModel.BombusAndXylocopaGenusLevelSummaryTables.xlsx")) 
+
+```
+
+```{r}
+### Common Name to Latin Name Table ###
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,
+               here,
+               update = FALSE)
+
+CommonNameToLatinNameTable <-
+  read_csv(here("data",
+                "cleaned.data",
+                "CommonNameToLatinNameTable.csv"),
+           name_repair = "universal")
+
+SummaryTable <-
+  read_csv(here("data",
+                "summarized.data",
+                "summarytables.genuslevel.universalfiltersapplied.csv"),
+           name_repair = "universal") 
+
+mergedsummarytable <- SummaryTable %>%
+  left_join(CommonNameToLatinNameTable, by = c("FGenus" = "Latin.Name"))
+
+write_csv(mergedsummarytable,
+         here("data",
+              "summarized.data",
+              "summarytables.genuslevel.universalfiltersapplied.csv"))
+
+
+
+```
+
+```{r}
+#| label: load_packages_and_functions
+#| warning: false
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,
+               here,
+               flextable,
+               cowplot,
+               writexl,
+               viridis,
+               update = FALSE)
+
+if(!exists("harmonthreattmodeltable", mode = "function")) source(here::here("functions",
+                                                                            "harmonthreattmodeltable.r"))
+
+if(!exists("pilotanalysistable", mode = "function")) source(here::here("functions", 
+                                                                    "pilotanalysistable.r"))
+
+```
+
+```{r}
+#| label: load_cleanedish_data_files
+#| warning: false
+
+genusleveldatafileinprogress <-
+  read_csv(here("data",
+                "cleaned.data",
+                "FinalGenusLevelAnalysisFileReRankedFlRank.csv"),
+           name_repair = "universal")
+
+ rawsurveyconditionstable <-
+  read_csv(here("data",
+                "raw.data",
+                "SurveyConditionsTableBetterDates.csv"),
+           name_repair = "universal")
+
+```
+
+```{r}
+#| label: merging_data_universal_filtering_and_adding_bee_score
+#| warning: false
+#| echo: true
+#| code-fold: true
+
+
+cleanedgenusleveldataset <- #returns 11542 rows, math predicts 11542! 
+  genusleveldatafileinprogress %>%
+  dplyr::left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::mutate(CorrRankAvgFlRankXCorrBBCount = CorrRankAvgFlRank * CorrBBCount) %>%
+  dplyr::mutate(SeasonalChunk = case_when(
+    month %in% c(2, 3, 4, 5) ~ 1,
+    month %in% c(6, 7, 8) ~ 2,
+    month %in% c(9, 10, 11) ~ 3)) %>%
+  dplyr::select(ID:ErrorCode,
+                SeasonalChunk,
+                SurveyNum:RankAvgFloralRank,
+                CorrRankAvgFlRank:CorrBBCount,
+                CorrRankAvgFlRankXCorrBBCount) %>%
+  dplyr::filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")%>%
+  dplyr::group_by(SurveyNum)  %>%
+  dplyr::filter(sum(BBcount) > 4) %>% #Remove surveys with under 5 bees
+  dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% #to verify that the filter worked
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to verify that the filter worked
+  dplyr::filter(NumberofFlowers > 4) %>% #survey 88 should no longer be present
+  dplyr::ungroup()
+
+#given that this is a fairly nice and "final" dataset, let me write it out to my final data files folder - 
+
+#write_csv(cleanedgenusleveldataset,
+#          here("data",
+#               "cleaned.data",
+#                "FinalGenusLevelDataFile.UniversalFiltersApplied.csv"))
+
+```
+
+```{r}
+#| label: testing_my_universal_filters
+#| warning: false
+
+TEST.cleanedgenusleveldataset <- #returns 11542 rows, math predicts 11542! 
+  genusleveldatafileinprogress %>%
+  dplyr::left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::mutate(CorrRankAvgFlRankXCorrBBCount = CorrRankAvgFlRank * CorrBBCount) %>%
+  dplyr::select(ID:ErrorCode,
+                SurveyNum:RankAvgFloralRank,
+                CorrRankAvgFlRank:CorrBBCount,
+                CorrRankAvgFlRankXCorrBBCount) %>%
+  dplyr::filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")%>%
+  dplyr::group_by(SurveyNum)  %>%
+  dplyr::filter(sum(BBcount) > 4) %>% #Remove surveys with under 5 bees
+  dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% #to verify that the filter worked
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to verify that the filter worked
+  dplyr::filter(NumberofFlowers > 4) %>% #survey 88 should no longer be present
+  dplyr::ungroup()
+
+Subset.SurveysWithUnder5Flowers <- #returns 75 obs (28 surveys making up 75 rows)
+  genusleveldatafileinprogress %>%
+  dplyr::left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::mutate(CorrRankAvgFlRankXCorrBBCount = CorrRankAvgFlRank * CorrBBCount) %>%
+  dplyr::select(ID:ErrorCode,
+                SurveyNum:RankAvgFloralRank,
+                CorrRankAvgFlRank:CorrBBCount,
+                CorrRankAvgFlRankXCorrBBCount) %>%
+  dplyr::filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")%>%
+  dplyr::group_by(SurveyNum)  %>%
+  dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% 
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to verify that the filter worked
+  dplyr::filter(NumberofFlowers < 5) %>% 
+  dplyr::ungroup() %>%
+  dplyr::mutate(Filtered.Because = "Under5Flowers")
+
+Subset.SurveysWithUnder5Bees <- #returns 2289 obs, 
+  genusleveldatafileinprogress %>%
+  dplyr::left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::mutate(CorrRankAvgFlRankXCorrBBCount = CorrRankAvgFlRank * CorrBBCount) %>%
+  dplyr::select(ID:ErrorCode,
+                SurveyNum:RankAvgFloralRank,
+                CorrRankAvgFlRank:CorrBBCount,
+                CorrRankAvgFlRankXCorrBBCount) %>%
+  dplyr::filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")%>%
+  dplyr::group_by(SurveyNum)  %>%
+  dplyr::filter(sum(BBcount) < 5) %>% #Remove surveys with under 5 bees
+  dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% #to verify that the filter worked
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to keep identical columns with the other tbl
+  dplyr::ungroup() %>%
+  dplyr::mutate(Filtered.Because = "Under5Bees")
+
+
+Summary.Subset.SurveysWithUnder5Flowers <- #returns 28 surveys
+  Subset.SurveysWithUnder5Flowers %>%
+  summarise(.by = SurveyNum,
+            NumberFlowers = n())
+
+Summary.Subset.SurveysWithUnder5Bees <- #returns 146 surveys
+  Subset.SurveysWithUnder5Bees %>%
+  summarise(.by = SurveyNum,
+            NumberFlowers = n())
+
+#Now lets see what surveys were removed for what reason
+
+Subset.SurveysWithUnder5BeesORUnder5Flowers <- 
+  Subset.SurveysWithUnder5Bees %>%
+  rbind(Subset.SurveysWithUnder5Flowers)
+
+Summary.Subset.SurveysWithUnder5BeesORUnder5Flowers <- #returns 164 surveys (some overlap)
+  Subset.SurveysWithUnder5BeesORUnder5Flowers %>%
+  summarise(.by = SurveyNum,
+            NumberFlowers = n(),
+            SumofBBCount = sum(BBcount),
+            ErrorCode = first(ErrorCode))
+
+TEST <- Summary.Subset.SurveysWithUnder5BeesORUnder5Flowers %>% 
+  left_join(genusleveldatafileinprogress, by = "SurveyNum")
+
+#Yay! This last line returns 2343 rows, which shows that the number of rows needing to be removed (because they are part of surveys with either under 5 bees or under 5 flowers) is equal to the number of rows subtracted by the filter (good!)  
+```
+
+```{r}
+#| label: saving_filtered_datasets_out
+
+filtered.datasets.list <- 
+  list("cleanedgenusleveldataset" = cleanedgenusleveldataset,
+       "FallData" = filteredgenusleveldatset.FallData,
+       "SpringData" = filteredgenusleveldatset.SpringData,
+       "SummerData" = filteredgenusleveldatset.SummerData)
+
+
+#writexl::write_xlsx(filtered.datasets.list,
+#                  here("data",
+#                      "cleaned.data",
+#                     "seasonal.datasets.genuslevel.universalfiltersapplied.xlsx"))
+
+
+```
+
+# **Summary Tables**
+
+#### Fowler-adapted Harmon-Threatt table
+
+This table is based on Jarrod Fowler's adaptation of a preference model from [Harmon-Threatt et. al. 2016](doi:10.5061/dryad.6kn05)
+
+```{r}
+#| label: tbl-harmon_threatt_model
+#| tbl-cap: Jarrod Fowler's adaptation of a preference model from Harmon-Threatt et. al. 2016. This table includes all genera present on 30 or more surveys, sorted in descending order by the final "preference" value. 
+
+finalharmonthreattmodeltable<- harmonthreattmodeltable(cleanedgenusleveldataset)
+
+finalharmonthreattmodeltable %>% 
+dplyr::filter(NumberSurveys > 29) %>%
+dplyr::arrange(vRank) %>%
+flextable::flextable()
+
+```
+
+```{r}
+#| label: tbl-pilot_analysis
+#| warning: false
+#| code-fold: true
+#| tbl-cap: This table includes all values involved in the creation of Jenan and Sam's "BeeScore" value. 
+
+JenanAndSamPilotAnalysisTable <- pilotanalysistable(cleanedgenusleveldataset)
+
+  JenanAndSamPilotAnalysisTable %>% 
+  dplyr::filter(NumberSurveys > 29) %>%
+  flextable::flextable()
+
+```
+
+```{r}
+#| label: tbl-combined_summary
+#| warning: false
+#| code-fold: true
+#| tbl-cap: A compilation of various "preference" metrics and a couple key values involved in their creation. 
+
+####first, with all the data, including genera on 30 or more surveys. No filters for seasonality, number of plants, number of bees, etc. 
+
+entiregenuslevelanalysistable <-
+  cleanedgenusleveldataset %>%
+  dplyr::summarise(
+    .by = FGenus,
+    NumberSurveys = n(),
+    #NumberSurveysWithVisitation = sum(BBcount >0),
+    ProportionSurveysWithVisitation = sum(BBcount > 0) / n(),
+    #AvgCorrFloralRank = mean(corrFloralRank),
+    #AvgRankAvgFloralRank = mean(RankAvgFloralRank),
+    Avg.Corr.RankAvg.FloralRank = mean(CorrRankAvgFlRank),
+    SumBBCount = sum(BBcount),
+    AvgBBCount = mean(BBcount),
+    AvgCorrBBCount = mean(CorrBBCount),
+    BBScore.CorrRankAvgFlRankXCorrBBCount = mean(CorrRankAvgFlRankXCorrBBCount),
+    StandardDeviationBBScore = sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE),
+    StandardErrorBBScore = (sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE)) /
+      sqrt(NumberSurveys)) %>%
+  dplyr::mutate(across(where(is.numeric),
+                       ~ round(., 2))) %>% # round values to make them presentable)
+  dplyr::arrange(desc(BBScore.CorrRankAvgFlRankXCorrBBCount)) %>%
+  dplyr::left_join(., finalharmonthreattmodeltable, by = "FGenus") %>%
+  dplyr::select(c(FGenus:StandardErrorBBScore, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Fowler.HarmonThreattModel.vRank" = "vRank")
+
+  entiregenuslevelanalysistable %>% 
+  dplyr::filter(NumberSurveys > 29) %>%
+  flextable::flextable()
+
+```
+
+```{r}
+#| label: tbl-combined_summary_fall_data
+#| warning: false
+#| code-fold: true
+#| tbl-cap: A compilation of various "preference" metrics and a couple key values involved in their creation for Fall surveys. 
+
+
+finalharmonthreattmodeltable.FallData <- harmonthreattmodeltable(filteredgenusleveldatset.FallData) 
+
+FallData.genuslevel.analysistable <-
+  filteredgenusleveldatset.FallData %>%
+  dplyr::summarise(
+    .by = FGenus,
+    NumberSurveys = n(),
+    #NumberSurveysWithVisitation = sum(BBcount >0),
+    ProportionSurveysWithVisitation = sum(BBcount > 0) / n(),
+    #AvgCorrFloralRank = mean(corrFloralRank),
+    #AvgRankAvgFloralRank = mean(RankAvgFloralRank),
+    Avg.Corr.RankAvg.FloralRank = mean(CorrRankAvgFlRank),
+    SumBBCount = sum(BBcount),
+    AvgBBCount = mean(BBcount),
+    AvgCorrBBCount = mean(CorrBBCount),
+    BBScore.CorrRankAvgFlRankXCorrBBCount = mean(CorrRankAvgFlRankXCorrBBCount),
+    StandardDeviationBBScore = sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE),
+    StandardErrorBBScore = (sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE)) /
+      sqrt(NumberSurveys)) %>%
+  dplyr::mutate(across(where(is.numeric),
+                       ~ round(., 2))) %>% # round values to make them presentable)
+  dplyr::arrange(desc(BBScore.CorrRankAvgFlRankXCorrBBCount)) %>%
+  dplyr::left_join(., finalharmonthreattmodeltable.FallData, by = "FGenus") %>%
+  dplyr::select(c(FGenus:StandardErrorBBScore, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Fowler.HarmonThreattModel.vRank" = "vRank")
+
+  FallData.genuslevel.analysistable %>% 
+  dplyr::filter(NumberSurveys > 29) %>%
+  flextable::flextable()
+
+```
+
+```{r}
+#| label: tbl-combined_summary_summer_data
+#| warning: false
+#| code-fold: true
+#| tbl-cap: A compilation of various "preference" metrics and a couple key values involved in their creation for Summer surveys. 
+
+finalharmonthreattmodeltable.SummerData <- harmonthreattmodeltable(filteredgenusleveldatset.SummerData) 
+
+SummerData.genuslevel.analysistable <-
+  filteredgenusleveldatset.SummerData %>%
+  dplyr::summarise(
+    .by = FGenus,
+    NumberSurveys = n(),
+    #NumberSurveysWithVisitation = sum(BBcount >0),
+    ProportionSurveysWithVisitation = sum(BBcount > 0) / n(),
+    #AvgCorrFloralRank = mean(corrFloralRank),
+    #AvgRankAvgFloralRank = mean(RankAvgFloralRank),
+    Avg.Corr.RankAvg.FloralRank = mean(CorrRankAvgFlRank),
+    SumBBCount = sum(BBcount),
+    AvgBBCount = mean(BBcount),
+    AvgCorrBBCount = mean(CorrBBCount),
+    BBScore.CorrRankAvgFlRankXCorrBBCount = mean(CorrRankAvgFlRankXCorrBBCount),
+    StandardDeviationBBScore = sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE),
+    StandardErrorBBScore = (sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE)) /
+      sqrt(NumberSurveys)) %>%
+  dplyr::mutate(across(where(is.numeric),
+                       ~ round(., 2))) %>% # round values to make them presentable)
+  dplyr::arrange(desc(BBScore.CorrRankAvgFlRankXCorrBBCount)) %>%
+  dplyr::left_join(., finalharmonthreattmodeltable.SummerData, by = "FGenus") %>%
+  dplyr::select(c(FGenus:StandardErrorBBScore, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Fowler.HarmonThreattModel.vRank" = "vRank")
+
+  SummerData.genuslevel.analysistable %>% 
+  dplyr::filter(NumberSurveys > 29) %>%
+  flextable::flextable()
+
+```
+
+```{r}
+#| label: tbl-combined_summary_spring_data
+#| warning: false
+#| code-fold: true
+#| tbl-cap: A compilation of various "preference" metrics and a couple key values involved in their creation for Spring surveys.
+
+
+finalharmonthreattmodeltable.SpringData <- harmonthreattmodeltable(filteredgenusleveldatset.SpringData) 
+
+SpringData.genuslevel.analysistable <-
+  filteredgenusleveldatset.SpringData %>%
+  dplyr::summarise(
+    .by = FGenus,
+    NumberSurveys = n(),
+    #NumberSurveysWithVisitation = sum(BBcount >0),
+    ProportionSurveysWithVisitation = sum(BBcount > 0) / n(),
+    #AvgCorrFloralRank = mean(corrFloralRank),
+    #AvgRankAvgFloralRank = mean(RankAvgFloralRank),
+    Avg.Corr.RankAvg.FloralRank = mean(CorrRankAvgFlRank),
+    SumBBCount = sum(BBcount),
+    AvgBBCount = mean(BBcount),
+    AvgCorrBBCount = mean(CorrBBCount),
+    BBScore.CorrRankAvgFlRankXCorrBBCount = mean(CorrRankAvgFlRankXCorrBBCount),
+    StandardDeviationBBScore = sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE),
+    StandardErrorBBScore = (sd(CorrRankAvgFlRankXCorrBBCount, na.rm = TRUE)) /
+      sqrt(NumberSurveys)) %>%
+  dplyr::mutate(across(where(is.numeric),
+                       ~ round(., 2))) %>% # round values to make them presentable)
+  dplyr::arrange(desc(BBScore.CorrRankAvgFlRankXCorrBBCount)) %>%
+  dplyr::left_join(., finalharmonthreattmodeltable.SpringData, by = "FGenus") %>%
+  dplyr::select(c(FGenus:StandardErrorBBScore, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Fowler.HarmonThreattModel.vRank" = "vRank")
+
+  SpringData.genuslevel.analysistable %>% 
+  dplyr::filter(NumberSurveys > 29) %>%
+  dplyr::arrange(Fowler.HarmonThreattModel.vRank) %>%
+  flextable::flextable()
+
+```
+
+```{r}
+#| label: saving_summary_tables_out
+#| warning: false
+#| code-fold: true
+
+combined.summary.tables.list <-
+  list(
+    "entiredataset" = entiregenuslevelanalysistable,
+    "FallData" = FallData.genuslevel.analysistable,
+    "SummerData" = SummerData.genuslevel.analysistable,
+    "SpringData" = SpringData.genuslevel.analysistable
+  )
+
+#writexl::write_xlsx(combined.summary.tables.list,
+#                   here("data",
+#                       "summarized.data", 
+#                       "summarytables.genuslevel.universalfiltersapplied.xlsx")) 
+
+
+```
+
+## **STUFF STILL IN PROGRESS: STAY TUNED!**
+
+### Bar Plot: Average Bumble Bee Count
+
+```{r, fig.width=7,fig.height=20}
+#| label: fig-barplot-AvgBBCount
+#| warning: false
+#| code-fold: true
+#| fig-cap: A barplot of average bumble bee count per genus. Only genera present on 30 or more surveys are included. 
+
+barplot.AvgBBCount <- 
+  entiregenuslevelanalysistable %>% 
+  ggplot() + 
+  scale_fill_grey() +
+  theme_classic() +
+  geom_bar(aes(y = reorder(FGenus, -AvgBBCount), x = AvgBBCount),
+           stat = "identity")
+
+barplot.AvgBBCount
+
+```
+
+### Bar Plot: Sum of Bumble Bee Count
+
+```{r, fig.width=7,fig.height=20}
+#| label: fig-barplot-SumBBCount
+#| warning: false
+#| code-fold: true
+#| fig-cap: A barplot of sum of bumble bee count per genus. Only genera present on 30 or more surveys are included. 
+
+barplot.SumBBCount <- 
+  entiregenuslevelanalysistable %>% 
+  ggplot() + 
+  scale_fill_grey() +
+  theme_classic() +
+  geom_bar(aes(y = reorder(FGenus, -SumBBCount), x = SumBBCount),
+           stat = "identity")
+
+barplot.SumBBCount
+
+```
+
+## I want to add the entire data prep process in here - from the stage of downloading each individual table from Access. It may be really hard though, as we did some steps manually and im not sure how I would automate them quite yet.
+
+##Load in my raw data
+
+Note - the flower table has had the following manual work done to create the file which I read in here: **1** Reviewed by Jarrod numerous times since the original upload of data into access **2**Some flower entries were missing floral rank - those were identified and resolved manually. If the flower did not have a bee present, I deleted the observation of that flower.
+
+There were three instances in which the flower did have a bee present; in those, I will remove the entire survey from the analysis. The three surveys which need to be removed are SurveyNums 562, 582, and 691. They remain in this file, and will be removed at the end of wrangling, prior to analysis in the final merged file. (maybe i should remove them earlier?)
+
+```{r}
+#| label: load_data 
+#| echo: true
+
+# rawsurveyconditionstable <-
+#   read_csv(here("data",
+#                 "raw.data",
+#                 "SurveyConditionsTableBetterDates.csv"),
+#            name_repair = "universal")
+# 
+# rawflowertable <- 
+#   read_csv(here("data",
+#                 "raw.data",
+#                 "FINALFLOWERTABLE_GENUS.csv"),
+#            name_repair = "universal")
+#   
+# rawbeetable <- 
+#   read_csv(here("data",
+#                 "raw.data",
+#                  "BeeTable29SEP23.csv"),
+#            name_repair = "universal")
+
+```
+
+# Prepare the flower table
+
+Here we address duplication of flowers with a survey, add rank average and corrected rank average floral rank.
+
+Duplication can arise in two ways: a) As a result of participants misidentifying different individuals of the same plant species as different species, or b) From the presence of two different species within the same genus. For genus level analysis, we combined all species within the same genus into a single row. We did this by retaining the row with the
+
+```{r}
+#| label: flower_table_prep
+#| warning: false
+
+# cleanflowertable <- 
+#   rawflowertable %>%
+#   dplyr::group_by(SurveyNum,FGenus)%>%
+#   dplyr::group_by(SurveyNum) %>%
+#   dplyr::mutate("RankAvgFloralRank" = rank(FloralRank))%>%
+#   dplyr::mutate("TestCorrFlRank" = FloralRank * 10/max(FloralRank)) %>%
+#   dplyr::mutate("CorrRankAvgFlRank" = RankAvgFloralRank * 10/max(RankAvgFloralRank))
+#   
+#   #dplyr::select(SurveyNum:corrFloralRank, #just reordering columns
+#               #  RankAvgFloralRank,
+#                # TestCorrFlRank,
+#               #  CorrRankAvgFlRank,
+#               #  BBcount,
+#               #  CorrBBCount)
+
+
+```
+
+```{r}
+#| label: fig-barplot-proportionvisitation
+#| warning: false
+#| code-fold: true
+#| fig-cap: A stacked barplot representing the number of surveys each genus was featured in, and the proportion of those which had at least one bee visit
+
+play.barplot.ProportionSurveysWithVisitation <- 
+  cleanedgenusleveldataset %>% 
+  filter(FlowerSampleSize > 29) %>%
+  ggplot() + 
+  #scale_fill_grey() +
+  theme_classic() +
+  geom_bar(aes(y = FGenus),
+           stat = "count",
+           fill = (BBcount > 0))
+
+play.barplot.ProportionSurveysWithVisitation
+
+ggplot(cleanedgenusleveldataset, aes(x = x, fill = group)) + 
+  geom_bar()
+
+
+
+
+
+barplot.ProportionSurveysWithVisitation <- 
+  cleanedgenusleveldataset %>% 
+  filter(FlowerSampleSize > 29) %>%
+  ggplot() + 
+  #scale_fill_grey() +
+  theme_classic() +
+  geom_bar(aes(y = reorder(FGenus, -BBcount), x = BBcount),
+           stat = "sum")
+
+barplot.ProportionSurveysWithVisitation
+
+```
+
+```{r}
+#| label: fig-linegraph_corrbbcount
+#| warning: false
+#| code-fold: true
+#| fig-cap: line graph of corrbbcount in progress 
+
+lineplot.BBScore <- 
+  cleanedgenusleveldataset %>% 
+  group_by(FGenus,SeasonalChunk) %>%
+  filter(n() > 29) %>%
+  #group_by(FGenus) %>%
+  ggplot(aes(x = SeasonalChunk, y = CorrRankAvgFlRankXCorrBBCount, color = FGenus)) + 
+  theme_classic() +
+  geom_point(stat = "summary", fun.y = "mean") +
+  geom_line(stat = "summary", fun.y = "mean") +
+   geom_errorbar(
+    stat = "summary", fun.ymax = "mean", fun.ymin = "mean",
+    width = 0.2) +  # Adjust the width of the error bars)
+  scale_x_continuous(
+    breaks = c(1, 2, 3),  # Set the breaks at 1, 2, and 3
+    labels = c("Spring", "Summer", "Fall")  # Set the labels for the breaks
+  )
+
+
+lineplot.BBScore
+```
+
+```{r}
+##### Here I will attempt to make a script which contains all the AABB data processing required to transform the raw data from Access into a wrangled summary table which includes bee score. 
+
+##### load my packages
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(readr,
+               dplyr,
+               magrittr,
+               writexl,
+               update = FALSE)
+
+#### Read in my raw data tables ####
+
+rawsurveyconditionstable <- read_csv("/Users/jenanel-hifnawi/Downloads/DriveDownload/AAADataEntry/AnalysisTroubleshooting/!!!FinalDataFiles/SurveyConditionsTables/SurveyConditionsTableBetterDates.csv", name_repair = "universal")
+  
+#Note - the flower table has had the following manual work done to create the file which I read in here: 
+# Reviewed by Jarrod numerous times since the original upload of data into access
+# Some flower entries were missing floral rank - those were identified and resolved manually. If the flower did not have a bee present, I deleted the observation of that flower. There were three instances in which the flower did have a bee present; in those, I will remove the entire survey from the analysis. The three surveys which need to be removed are SurveyNums 562, 582, and 691. They remain in this file, and will be removed at the end of wrangling, prior to analysis in the final merged file. (maybe i should remove them earlier?)
+rawflowertable <- read_csv("/Users/jenanel-hifnawi/Downloads/DriveDownload/AAADataEntry/AnalysisTroubleshooting/7_CorrectingFlowersWithJarrod/4_JarrodFinalReview/FINALFLOWERTABLE_GENUS.csv", name_repair = "universal")
+  
+rawbeetable <- read_csv("/Users/jenanel-hifnawi/Downloads/DriveDownload/AAADataEntry/AnalysisTroubleshooting/!!!FinalDataFiles/BeeTables/BeeTable29SEP23.csv", name_repair = "universal")
+
+
+#### 1. Working on the flower table  - address duplication, add rank average and corrected rank average fl rank. ####
+
+cleanflowertable <- 
+  rawflowertable %>%
+  dplyr::group_by(SurveyNum,FGenus)%>%
+  dplyr::group_by(SurveyNum) %>%
+  dplyr::mutate("RankAvgFloralRank" = rank(FloralRank))%>%
+  dplyr::mutate("TestCorrFlRank" = FloralRank * 10/max(FloralRank)) %>%
+  dplyr::mutate("CorrRankAvgFlRank" = RankAvgFloralRank * 10/max(RankAvgFloralRank)) #%>%
+  
+
+dplyr::select(SurveyNum:corrFloralRank, #just reordering columns
+                RankAvgFloralRank,
+                TestCorrFlRank,
+                CorrRankAvgFlRank,
+                BBcount,
+                CorrBBCount)
+
+
+```
+
+```{r}
+
+## Hello AABB coordinator!! What a fantastic time it is to use R to automate and keep inventory of the entire AABB analysis process!!
+
+
+## Here I will lay out a pipeline for genus level analysis, then I will use and modify that pipeline to plug in other datasets to conduct all of the various analysis types with a simple series of edits! How amazing! 
+
+##Steps I did manually but need to include##
+## Filter the bee data by species to get only BBs
+## Cut out flowers that dont make it on 30 surveys
+## Creation of pivot tables? 
+##
+
+#AABB Data Process:
+################### 1.Flower Data Cleaning! ###################
+
+#### 1a. Clean flower names #####
+
+#This step begins with manually reviewing the flower names to find misspelled flower names, botanical synonyms, etc. Make an excel file that has two columns - one with a list of all the misspelled names, and one with the respective corrected names. Then read this file in! :)  
+
+# Load the CSV files ( my most up to date flower table and spelling correction table)
+flower_table <- read.csv("/Users/jenanel-hifnawi/Downloads/DriveDownload/AAADataEntry/AnalysisTroubleshooting/8_CorrectingFlowersWithJarrod/3_RoundThreeFlowerCorrection/UncorrectedFlowerTable_OutputFromRoundTwo.csv")
+
+SpellingCorrectionTable <- read.csv("/Users/jenanel-hifnawi/Downloads/DriveDownload/AAADataEntry/AnalysisTroubleshooting/8_CorrectingFlowersWithJarrod/3_RoundThreeFlowerCorrection/FSpeciesSpellingCorrectionTableRoundThree.csv")
+
+# Define the misspelled words and their corresponding correct spellings
+misspelled_words <- SpellingCorrectionTable$MisspelledNameRound3
+
+correct_words <- SpellingCorrectionTable$CorrectedNameRound3
+
+#use mutate!!
+
+#Load dpylr
+library(dplyr)
+
+# Create a named vector for replacement
+replacement_dict <- setNames(correct_words, misspelled_words)
+
+# Use mutate to replace misspelled words in the 'text' column
+flower_table_corrected <- flower_table %>%
+  mutate(FSpecies = ifelse(FSpecies %in% names(replacement_dict), replacement_dict[FSpecies], FSpecies))
+
+#Write the CSV
+setwd("/Users/jenanel-hifnawi/Downloads/DriveDownload/AAADataEntry/AnalysisTroubleshooting/8_CorrectingFlowersWithJarrod/ROutput")
+
+write.csv(flower_table_corrected, "FSpeciesCorrectedwithDplyrPostRound[insert round of correction here].csv")
+
+#### 1b. Address duplicate flowers#####
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(dplyr,
+               readr,
+               skimr,
+               tibble,
+               update = FALSE)
+# flower_table <- read_csv("insert path to flower table")
+
+surveys <- split(flower_table, f = flower_table$SurveyNum)
+
+surveyNum_vec <- as.character(unique(flower_table$SurveyNum))
+
+#empty vector to catch output of each iteration
+
+dupe_vec <- c()
+
+#loop to iterate over the vector of unique survey numbers
+
+for (i in surveyNum_vec) {
+  
+  out <- anyDuplicated(surveys[[i]]$FSpecies)
+  
+  dupe_vec <- c(dupe_vec, out)
+  
+}
+
+#create dataframe from duplicate data
+
+dupe_frame <- as.data.frame(cbind(surveyNum_vec, dupe_vec))
+
+# change column names
+colnames(dupe_frame) <- c("surveyNum", "row_of_dupe")
+
+#remove surveys that had no dupes
+
+dupe_frame <- dupe_frame[!dupe_frame$row_of_dupe == "0", ]
+
+#write the file
+
+#Do i need to set my working directory or has justin done it for me somehow?
+
+#write.csv(dupe_frame, file = "flower_survey_duplicates.csv", row.names = FALSE)
+
+
+#### 1c. Delete flowers with no Floral Rank ####
+
+##some variation of filter? to filter out rows where values = NA? or what are they in the dataset im plugging in?
+
+
+
+#### 1d. Add a column with Corrected Floral Rank ####
+library(readr)
+
+#read in updated .csv
+flower_table <- read_csv("path to my most up to date flower table")
+
+flower_table$FloralRank[is.na(flower_table$FloralRank)] <- 0
+
+#split large dataframe into list object of dataframes for each unique SurveyNum
+surveys <- split(flower_table, f = flower_table$SurveyNum)
+#---
+
+#sanity check: look at the dataframe in the list corresponding to SurveyNum 2:
+
+surveys[[2]] #careful, this asks for the 2nd data frame in the list, not the
+# frame named "2", see output in console, it's actually SurveyNum 4...
+
+surveys[["2"]] #the number naming each dataframe in the list is actually a character
+
+#---
+
+
+#obtain vector of each unique SurveyNum (used in the for loop below), note
+# the use of as.character to change the numeric values in SurveyNum column to 
+# characters to match the fact that dataframes in the list are named w/
+# characters (e.g., 2 vs "2")
+
+surveyNum_vec <- as.character(unique(flower_table$SurveyNum))
+
+#find maximum values in a particular column w/ max() function via base R
+# note how we pick SurveyNum 2 dataframe from the list as above, then with 
+# the '$' operator, we choose a specific column of that dataframe: FloralRank,
+# then we wrap it in the max function as below, ignore the print/paste stuff,
+# for when we integrate this line into a for loop later! Make sure to double-
+# check that 15 is actually the max value by looking at the dataframe in the
+#global env. or console...
+
+print(paste("Highest rank is: ",max(surveys[["2"]]$FloralRank)))
+
+### individual for loop operations 
+
+#individual loop components:
+
+#empty vector to append output of each loop iteration to
+
+corrFloralRank <- c()
+
+#this object will hold the max value of a particular iteration of the loop:
+max_val <- max(surveys[["2"]]$FloralRank)
+
+#this object will divide 10 by the value held by max_val we just created and 
+# hold the output of the division (the weighting factor)
+weight <- 10/max_val
+
+# this object will hold the output of multiplying the whole FloralRank column of
+# a particular dataframe by the weighting factor in the 'weight' object
+cor_vec <- surveys[["2"]]$FloralRank * weight
+
+#this line will append the weighted vector in the cor_vec object to a growing 
+#vector of corrected floral rank values. The final vector should have the same 
+#number of elements as the 'jenan_flowers_2 dataframe has observations! check
+#in the global environment to see (should be 16496 for the data I was provided)
+corrFloralRank <- c(corrFloralRank, cor_vec)
+
+######### for loop construction
+
+#now we put all the steps we made above into a loop that will perform each
+#operation over each individual dataframe in the 'surveys' list object. The loop
+# will iterate 787 times, as there are 787 unique surveys stored as dataframes
+# in 'surveys' (check and see next to the object in the global env.)
+
+corrFloralRank <- c() #make empty vector again
+
+#initialize the loop with this heading: for every survey number 'i' in the 
+#vector surveyNum_vec, do the following operations within the curly brackets.
+#note that i is a variable that will take the place of each value in the
+#vector surveyNum_vec; for example in the first turn of the loop, i will be "2",
+#which is the first element in the vector (and the name of the first survey
+#dataframe in the list 'surveys')
+
+for (i in surveyNum_vec) {
+  
+  
+  max_val <- max(surveys[[i]]$FloralRank)
+  
+  weight <- 10/max_val
+  
+  cor_vec <- surveys[[i]]$FloralRank * weight
+  
+  corrFloralRank <- c(corrFloralRank, cor_vec)
+  
+}
+
+
+#bind the new vector of corrected floral ranks to the original datafile as a new
+#column: corrFloralRank
+
+
+flower_table <- cbind(flower_table, corrFloralRank)
+
+#write the updated dataframe to a new .csv file with column headers and row names 
+#write.csv(flower_table, file = "flower_table_w_corrected_floral_ranks.csv")
+
+
+
+################### 2. Bee Data Wrangling! ###################
+
+#### 2a. Simplify bumble bee table ####
+#Do this by removing species level IDs and sex information, allowing us to drop the columns for sex and combine rows of different bee species on the same flower into a single row (e.g. you had impatiens and bimac on flower number 3, so flower number 3 would have 2 rows in our initial bee table - we will combine these into one row of "Bombus species")
+
+library(readr)
+library(dplyr)
+
+##### Bee count by flower number data sheet preparation
+
+# admittedly, this is probs not the most efficient way to script this but it's
+# still not a ton of work with the few extra lines it takes, so bear with me!
+
+bumblers <- read_csv("BumbleBeeTable23AUG23 - RAWDATA.csv")
+
+#drop the sex column of bumblers dataframe
+bumblers <- subset(bumblers, select = -Sex)
+
+#drop the species column
+bumblers <- subset(bumblers, select = -BSpecies)
+
+#create a vector of "Bombus_sp" to replace all values of current Bspecies column
+bee_species <- rep("Bombus_sp", times = 6272)#there's this many observations
+
+#bind new species name column to dataframe
+bumblers <- cbind(bumblers, bee_species)
+
+#reorder columns as provided in OG .csv
+bumblers <- bumblers[,c(1,2,5,3,4)]
+
+#split into list object by survey number
+bum_surv_lol <- split(bumblers, f = bumblers$SurveyNum)
+#---
+# okay, here's the function we will work on our individual dataframes in the list
+# with. It will sum the count while grouping by FNum. Adding the +SurveyNum and
+# +bee_species to the formula is a little janky if they were actually being used 
+# as grouping factors... here we just want to keep them in the output (as per
+# your instructions) so we'll add 'em to the formula so they're retained -- they
+# don't vary within each survey, so they won't mess with the grouping (i think).
+
+# the test_dat object was just the element "2" in bum_surv_lol. Just did this line
+# to get aquainted with the behavior of the function, you can disregard it!
+
+# aggregate(Count ~ SurveyNum + bee_species + FNum, data = test_dat, FUN = sum)
+
+
+
+##### The mighty lapply
+
+# lapply is a function that does work on every element of a list that essentially
+# replaces a for loop in this application in favor of a one-liner function!
+# the first argument of the lapply is the list object we want to do work on and 
+# the next argument is the function and we want to use on each list element as
+# well as that functions constituent arguments for our application. Its output is
+# given as a list with as many elements as were in the OG list provided;
+# each element in this case, is a table with rows grouped by FNum and count for 
+# each FNum all summed!
+
+the_bumbletons <- lapply(bum_surv_lol, function(x) {(aggregate(Count ~ SurveyNum + bee_species + FNum, data = x, FUN = sum))})
+
+#bind all the dataframes in our list of dataframes in to one dataframe! Dataframe, dataframe, dataframe! Also, dataframe. 
+
+mrs.bumblesworth <- bind_rows(the_bumbletons)
+
+#write new dataframe to a .csv file, will go into your working dir as scripted
+#write.csv(mrs.bumblesworth, file = "summed_count_X_FNum.csv", row.names = F)
+
+#### 2b. Add a corrected bee count column ####
+
+library(readr)
+
+#Jenan's 'lil pipeline: Step 2 -- get proportion of bees per unique Fnum!!!!
+
+#read in data count by Fnum data
+Fnum_count <- read_csv("summed_count_X_FNum.csv") 
+
+#split data into list of individual survey dataframes
+Fnum_count_list <- split(Fnum_count, f = Fnum_count$SurveyNum)
+
+#character vector of unique surveys
+surveyNum_vec <- as.character(unique(Fnum_count$SurveyNum))
+
+##### individual loop components
+
+#empty vector to catch output of each loop iteration
+
+prop_bees <- c()
+
+#get total bees on a particular survey, store value in tot_bees object
+tot_bees <- sum(Fnum_count_list[["2"]]$Count)
+
+#divide the count of bees on each Fnum by the total bees on a particular survey
+prop <- Fnum_count_list[["2"]]$Count/tot_bees
+
+#concatenate each iterations output vector to the growing prop_bees vector
+prop_bees <- c(prop_bees, prop)
+
+##### for loop 
+
+prop_bees <- c()# clear out this vector
+
+for (i in surveyNum_vec) {
+  
+  tot_bees <- sum(Fnum_count_list[[i]]$Count)
+  
+  prop <- Fnum_count_list[[i]]$Count/tot_bees
+  
+  prop_bees <- c(prop_bees, prop)
+  
+}
+
+#bind vector to input data frame
+
+proportion_bee_count <- cbind(Fnum_count, prop_bees)
+
+#write the updated dataframe to a new .csv file with column headers
+write.csv(proportion_bee_count, file = "proportion_bee_count.csv", row.names = F)
+
+
+################### 3. Merging Bee and Flower Data! ###################
+
+#### 3a. Merge Flower and Bee Data ####
+
+library(readr)
+
+flower_table_final <- read_csv("flower_data.csv")
+
+bee_table_final <- read_csv("summed_count_X_FNum.csv")
+
+#merge function, specify the columns of interest within [] for
+#summed_countX_FNum with the concatenate function. Also use concatenate to tell
+#the 'by' argument that we want to merge by two columns (survey number and FNum)
+#'all.x' argument allows us to keep rows that dont have matches!
+
+merged_flower_and_bee_table <- merge(flower_table_final, bee_table_final[, c("SurveyNum", "FNum", "Count")], by= c("SurveyNum", "FNum"), all.x=TRUE)
+
+#change the new column name to the one you specified
+
+colnames(merged_flower_and_bee_table)[7] <- "BBcount"
+
+#convert NA's to zeros, there shouldn't be any NA's anywhere else but the new column. 
+
+merged_flower_and_bee_table[is.na(merged_flower)] <- 0
+
+write.csv(merged_flower_and_bee_table, file = "merged_flower_table.csv", row.names = F)
+
+
+```

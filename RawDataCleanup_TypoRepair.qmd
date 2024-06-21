@@ -1,0 +1,58 @@
+---
+title: "RawDataCleanup_TypoRepair"
+author: "jenan"
+format: html
+editor: visual
+---
+
+```{r}
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,
+               here,
+               taxize,
+               update = FALSE)
+```
+
+```{r}
+
+ FlowerTable <- 
+   read_csv(here("data",
+                  "raw.data",
+                  "FinalFlowerTable_MaxID_29SEP23.csv"),
+             name_repair = "universal")
+```
+
+## Flower Table Spelling Corrections
+
+```{r}
+#here I replace misspelled flower names with correct spellings
+
+TyposRemoved.FlowerTable <- FlowerTable %>%
+  mutate(FSpecies = if_else(FSpecies == "Coroepsis tripteris", "Coreopsis tripteris", FSpecies))
+```
+
+```{r}
+#here I do summaries to check for typos
+
+summaries <- TyposRemoved.FlowerTable %>%
+  summarise(.by = FSpecies,
+            n())
+
+FSpeciesNoGenusLevelIDs <- summaries %>%
+  filter(!grepl(" species", FSpecies))
+
+FSpeciesVector1to500 <- FSpeciesNoGenusLevelIDs$FSpecies[1:500]
+
+temp <- gnr_resolve(FSpeciesVector1to500,
+                    resolve_once = TRUE)
+```
+
+```{r}
+# here I save out the corrected table
+
+write_csv(TyposRemoved.FlowerTable,
+          here("data",
+                "cleaned.data",
+                "FinalFlowerTable_TyposResolved.csv"))
+
+```

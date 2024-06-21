@@ -1,0 +1,238 @@
+---
+title: "AABB Plots"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: load packages
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,
+               patchwork,
+               here,
+               readxl,
+               writexl,
+               viridis,
+               cowplot,
+               update = FALSE)
+```
+
+```{r}
+
+#???
+
+BeeTableSummary <- 
+  BeeTable %>%
+  summarise( .by = c(BSpecies, Sex),
+             Count = sum(Count))
+```
+
+
+
+```{r}
+#| label: load data
+
+#Bee Species Data Subsets
+ load(here("data",
+              "cleaned.data",
+              "beespeciesdatasubsets.RData"))
+ 
+# Bee Species Data Subsets ready for pilot analysis 
+load(here("data",
+              "cleaned.data",
+              "dataframesforpilotanalysistables.RData"))
+ 
+#Bee Species Pilot Analysis Tables
+  load(here("data",
+            "cleaned.data",
+            "finalpilotanalysistables.RData"))
+ 
+#Bee Species Harmon-Threatt Models
+ load(here("data",
+               "cleaned.data",
+               "beespeciesharmonthreatttables.RData"))
+ 
+ 
+```
+
+```{r}
+# I want the plots to be comparable easily. I think aligning them may be impossible given the differing overlap of top 10 families between each dataset. However! I can get the colors to match and then just set the barplot in descending order.}
+
+# Assuming finaldataframesforpilotanalysis is a list of dataframes
+
+barplot_function <- function(df) {
+  barplot_summary <- df %>%
+    summarise(Family, SumofCount = sum(Count)) %>%
+    arrange(desc(SumofCount)) %>%
+    slice_head(n = 10)
+  
+  return(barplot_summary)
+}
+
+# Use Map to apply the function to each dataframe in the list
+summary_list <- map(barplot_function, finaldataframesforpilotanalysis)
+
+# Combine all the summarized dataframes into a single dataframe
+combinedtoptens <- bind_rows(summary_list, .id = "Iteration")
+
+
+toptenfamiliesdataframe <- combinedtoptens %>%
+  filter(!(Iteration %in% c("Bombus.citrinus",
+                            "Bombus.species",
+                            "Xylocopa.virginica"))) %>%
+  select(Family) %>%
+  distinct() 
+
+```
+
+```{r}
+
+barplot_function <- function(df, df_name) {
+  barplot_summary <- df %>%
+    summarise(.by = Family, SumofCount = sum(Count)) %>%
+    arrange(desc(SumofCount)) %>%
+    slice_head(n = 10)
+
+  # Add a title based on the dataframe name
+  plot_title <- paste("", df_name)
+
+  barplot <- ggplot(barplot_summary,
+                    aes(x = reorder(Family, -SumofCount),
+                        y = SumofCount,
+                        fill = Family)) +
+    geom_bar(stat = "identity") +
+    theme_classic() + 
+    labs(x = NULL, y = NULL, title = plot_title) +
+    scale_x_discrete(guide = guide_axis(angle = 45)) +
+    theme(legend.position ="none") +
+    scale_fill_manual(
+      values = pal,
+      limits = names(pal)
+    )
+
+  return(barplot)
+}
+
+# Use Map to apply the function to each dataframe in the list
+plots_list <- Map(barplot_function, finaldataframesforpilotanalysis, names(finaldataframesforpilotanalysis))
+
+multiplot_list <- plots_list[-c(3,5,9,10,11,12,13,14)]
+
+multiplot <- cowplot::plot_grid(plotlist = multiplot_list, nrow = 3)
+```
+
+```{r}
+
+barplot_function_BeeScore <- function(df, df_name) {
+  barplot_summary_BeeScore <- df %>%
+    summarise(.by = Family,
+              AvgBeeScore = mean(BeeScore),
+              NumberSurveys = n()) %>%
+    filter(NumberSurveys > 9) %>%
+    arrange(desc(AvgBeeScore)) %>%
+    slice_head(n = 10)
+
+  # Add a title based on the dataframe name
+  plot_title <- paste("", df_name)
+
+  barplot_BeeScore <- ggplot(barplot_summary_BeeScore,
+                    aes(x = reorder(Family, -AvgBeeScore),
+                        y = AvgBeeScore,
+                        fill = Family)) +
+    geom_bar(stat = "identity") +
+    theme_classic() + 
+    labs(x = NULL, y = NULL, title = plot_title) +
+    scale_x_discrete(guide = guide_axis(angle = 45)) +
+    theme(legend.position ="none") +
+    scale_fill_manual(
+      values = pal,
+      limits = names(pal)
+    )
+
+  return(barplot_BeeScore)
+}
+
+# Use Map to apply the function to each dataframe in the list
+plots_list_BeeScore <- Map(barplot_function_BeeScore, finaldataframesforpilotanalysis, names(finaldataframesforpilotanalysis))
+
+multiplot_list_BeeScore <- plots_list_BeeScore[-c(3,5,9,10,11,12,13,14)]
+
+multiplot_BeeScore_n10 <- cowplot::plot_grid(plotlist = multiplot_list_BeeScore, nrow = 3)
+```
+
+```{r}
+lineplot.BBScore <- 
+  cleanedgenusleveldataset %>% 
+  filter(FGenus %in% c("Erigeron species", "Pycnanthemum species", "Taraxacum species", "Monarda species", "Glechoma species")) %>%
+  #group_by(FGenus) %>%
+  ggplot(aes(x = SeasonalChunk, y = CorrRankAvgFlRankXCorrBBCount, color = FGenus)) + 
+  theme_classic() +
+  geom_point(stat = "summary", fun.y = "mean") +
+  geom_line(stat = "summary", fun.y = "mean") +
+   geom_errorbar(
+    stat = "summary", fun.ymax = "mean", fun.ymin = "mean",
+    width = 0.2) +  # Adjust the width of the error bars)
+  scale_x_continuous(
+    breaks = c(1, 2, 3),  # Set the breaks at 1, 2, and 3
+    labels = c("Spring", "Summer", "Fall")  # Set the labels for the breaks
+  ) +
+  labs(x = NULL, y = "BBScore") +
+    theme_classic() +
+    scale_color_viridis_d(option = "magma", 
+                        begin = .1, 
+                       end = .9)
+
+```
+
+
+```{r}
+# Color stuff
+toptenfamiliesvector <- toptenfamiliesdataframe$Family
+colorvector <- rainbow(20)
+
+pal <- c(
+"Asteraceae"      = "#FFE500",
+"Amaryllidaceae"  = "#FF4D00",
+"Apocynaceae"     = "#FF9900",
+"Caryophyllaceae" = "#FF0000",
+"Rubiaceae"       = "#CCFF00",
+"Hypericaceae"    = "#80FF00",
+"Plantaginaceae"  = "#33FF00",
+"Apiaceae"        = "#00FF19",
+"Fabaceae"        = "#00FF66",
+"Lamiaceae"       = "#7F00FF",
+"Caprifoliaceae"  = "#00FFFF",
+"Euphorbiaceae"   = "#00B3FF",
+"Solanaceae"      = "#FF0000",
+"Campanulaceae"   = "#001AFF",
+"Clethraceae"     = "#3300FF",
+"Ranunculaceae"   = "#0066FF",
+"Rosaceae"        = "#CC00FF",
+"Verbenaceae"     = "#FF00E6",
+"Convolvulaceae"  = "#FF0099",
+"Lythraceae"      = "#FF004D")
+
+
+```
+
+```{r}
+#| label: lets plot!
+
+piesummarytest <- finaldataframesforpilotanalysis[["AllBombus"]] %>%
+  summarise( .by = Family,
+             SumofCount = sum(Count)) %>%
+  arrange(desc(SumofCount)) %>%
+  slice_head(n = 10)
+
+ggplot(piesummarytest,
+       aes(x =  Family, y = SumofCount,
+           fill = Family)) +
+  geom_bar(stat = "identity") +
+ # coord_polar("y", start = 0) +
+  theme_minimal() + 
+  labs(x = NULL, y = "# Visits") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  theme(legend.position ="none")
+
+```

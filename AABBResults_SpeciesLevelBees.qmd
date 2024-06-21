@@ -1,0 +1,461 @@
+---
+title: "AABB Results"
+author: "Jenan El-Hifnawi"
+format: 
+ html: 
+    title-block-banner: true
+    theme: pulse
+editor: visual
+echo: false
+---
+
+*This document outlines the data analysis process for [Ask A Bumble Bee.](https://u.osu.edu/askabumble/) It includes various tables, figures, and the code chunks involved in the creation of these objects. If you have any questions, please contact bumblebeecount\@gmail.com .*
+
+```{r}
+#| label: load_packages_and_functions
+#| warning: false
+
+if (!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse,
+               patchwork,
+               here,
+               taxize,
+               flextable,
+               cowplot,
+               writexl,
+               viridis,
+               update = FALSE)
+
+if(!exists("Generalharmonthreattmodeltable", mode = "function"))
+  source(here::here("functions",
+                    "Generalharmonthreattmodeltable.r"))
+
+
+if (!exists("generalpilotanalysistable", mode = "function"))
+  source(here::here("functions",
+                    "GeneralPilotAnalysisTable.R"))
+
+```
+
+```{r}
+#| label: load_cleanedish_data_files
+#| warning: false
+
+genusleveldatafileinprogress <-
+  read_csv(here("data",
+                "cleaned.data",
+                "FinalGenusLevelAnalysisFileReRankedFlRank.csv"),
+           name_repair = "universal")
+
+genusleveldatafileinprogressunfiltered <- 
+  read_csv(here("data",
+               "cleaned.data",
+               "FinalGenusLevelDatafileUnfiltered.csv"))
+
+ rawsurveyconditionstable <-
+  read_csv(here("data",
+                "raw.data",
+                "SurveyConditionsTableBetterDates.csv"),
+           name_repair = "universal")
+ 
+ BeeTable <- #7300 rows 
+  read_csv(here("data",
+                "raw.data",
+                "BeeTable29SEP23.csv"),
+           name_repair = "universal")
+ 
+ genustofamilytable <-
+  read_csv(here("data",
+                "cleaned.data",
+                "genustofamilytable.csv"),
+           name_repair = "universal") %>%
+  mutate(FGenus = paste0(Genus," species"))
+ 
+ FlowerTable <- 
+   read_csv(here("data",
+                  "raw.data",
+                  "FINALFLOWERTABLE_GENUS.csv"),
+             name_repair = "universal")
+ 
+ FlowerTableAllDupesPresent <- 
+      read_csv(here("data",
+                  "raw.data",
+                  "FINALFLOWERTABLE_GENUS.csv"),
+             name_repair = "universal")
+```
+
+# **Universal Data Wrangling**
+
+Here, I'm merging in my surveys conditions data, adding in a bee score field, adding family IDs, and filtering out surveys that should be universally thrown out! Surveys removed here include those which had under 5 flower genera, under 5 bees, or the errorcode "NoFRHASBEES". This error code indicates that at least one plant in the survey which was visited by a bee was missing a floral rank value, making the survey unusable. I save the final nice table out at the end of this chunk.
+
+### Universal merging, mutating, and filtering
+
+```{r}
+#| label: universal_data_wrangling_bee_table_prep
+#| warning: false
+#| echo: false
+#| code-fold: true
+
+BeeTablePrep1 <- 
+  BeeTable %>%
+  pivot_wider(.,
+              names_from = BSpecies,
+              values_from = Count,
+              values_fill = 0,
+              names_repair = "universal") %>%
+  select(!c(Sex, ID, Xylocopa.micans, Bombus.borealis, Bombus.ternarius,Bombus.vagans)) %>%
+  left_join(FlowerTable, by = c("SurveyNum", "FNum")) %>% 
+  select(!c("IDnew","CountofLots":"corrFloralRank")) 
+
+```
+
+```{r}
+#| label: clearing_out_duplicated_rows_MUST_RUN_THIS_CHUNK
+#| warning: false
+#| echo: false
+#| code-fold: true
+
+#In this chunk I adress duplication within the bee table by summing all columns for any rows with the same FGenus and SurveyNum. This needs to occur because each different sex or species will have its own row and that is not needed now. Additionally, flower duplication can cause this duplication. 
+# I do so by mapping through a function which groups by both SurveyNum and FNum and calculates the sum, in order to 
+
+
+variable_names <- names(dplyr::select(BeeTablePrep1,
+                                      Bombus.impatiens:Bombus.terricola))
+
+# Function to sum bees on plants of the same genus within a survey
+sumbeetabledupes <- function(variable) {
+  BeeTablePrep1 <<- BeeTablePrep1 %>%
+    group_by(SurveyNum, FGenus) %>%
+    mutate(!!variable := sum(!!sym(variable))) %>%
+    ungroup()
+}
+
+# Use map to apply the function to each variable
+map(variable_names, ~sumbeetabledupes(.x))
+
+
+CleanWideBeeTable <- 
+  BeeTablePrep1 %>%
+  select(!FNum) %>%
+  distinct() %>%
+  group_by(SurveyNum) %>%
+  rowwise() %>% #makes the following sum operations occur within a row across multiple columns
+  mutate(AllBombus = sum(c_across(matches("Bombus")), na.rm = TRUE),
+         AllXylocopa = sum(c_across(matches("Xylocopa")), na.rm = TRUE)) %>%
+  ungroup() %>%
+  relocate(c(FGenus, AllBombus, AllXylocopa), .before = Bombus.impatiens)
+
+```
+
+```{r}
+#| label: merging_bee_data_with_genusleveldatafileinprogress
+#| warning: false
+#| echo: false
+#| code-fold: true
+
+##OH MY GOD THIS WORKS!!! PRECIOUS!! The math seems good given that when the BBcount >5 filter is applied there are 11542 rows, as we expect! Once I take that filter away given that it is not relevant to us, I get 13810 rows! 
+
+cleanedgenusleveldataset <- 
+  genusleveldatafileinprogressunfiltered %>%
+  left_join(genustofamilytable, by = "FGenus") %>%
+  left_join(CleanWideBeeTable, by = c("SurveyNum", "FGenus")) %>%
+  mutate(across(AllBombus:Bombus.terricola, ~replace(., is.na(.), 0))) %>%
+  group_by(SurveyNum) %>% #in the next line I sum count on duplicated genera
+  mutate(across(AllBombus:Bombus.terricola, ~ sum(.), .names = "sum_{.col}")) %>%
+  ungroup() %>%
+  left_join(rawsurveyconditionstable, by = "SurveyNum") %>%
+  dplyr::group_by(SurveyNum) %>%
+  dplyr::filter(sum(BBcount) > 4) %>% #Remove surveys with under 5 bees
+  #dplyr::mutate("SumofBBcount" = sum(BBcount)) %>% #to verify that the filter worked
+  dplyr::mutate("NumberofFlowers" = n()) %>% #to verify that the filter worked
+  dplyr::filter(NumberofFlowers > 4) %>% #survey 88 should no longer be present
+  dplyr::ungroup() %>%
+  relocate(ID:Longitude, .before = SurveyNum) %>%
+  filter(!grepl("NoFRHASBEES", ErrorCode)) %>% # removes surveys with that error code
+  dplyr::add_count(FGenus, name = "FlowerSampleSize")  %>%
+  dplyr::mutate("corrFloralRank" = CorrRankAvgFlRank) %>%
+  dplyr::mutate("FloralRank" = RankAvgFloralRank) %>%
+  dplyr::select(!c(CorrRankAvgFlRank, TestCorrFlRank, RankAvgFloralRank))
+
+```
+
+#### Fowler-adapted Harmon-Threatt table
+
+This table is based on Jarrod Fowler's adaptation of a preference model from [Harmon-Threatt et. al. 2016](doi:10.5061/dryad.6kn05)
+
+```{r}
+#| label: tbl-harmon_threatt_model
+#| tbl-cap: Jarrod Fowler's adaptation of a preference model from Harmon-Threatt et. al. 2016. This table includes all genera present on 30 or more surveys, sorted in descending order by the final "preference" value. 
+
+#Set the counters
+
+dat <- cleanedgenusleveldataset
+cont.y.var <- names(dplyr::select(cleanedgenusleveldataset,
+                                        AllBombus:Bombus.terricola))
+
+###CHECK IF I NEED THIS FIRST LOOP - IT SEEMS TO BE DUPLICATED NEEDLESSLY 
+# a loop to produce the filtered datasets
+for (i in seq_along(cont.y.var)) {
+
+  # Create the file and assign them to objects named such that we can retrieve all of the ones we want later.
+
+  assign(
+    paste0(cont.y.var[i],".filtered_data"),
+
+    # Generate the contents of the objects using our function.
+    {
+      # Extract the variable name without the "sum_" prefix
+      var_name <- sub("^sum_", "", cont.y.var[i])
+
+      # Filter the dataset based on the condition
+      filtered_dat <- dat %>%
+        filter(get(paste0("sum_", var_name)) > 0)
+
+      # Return the filtered dataset
+      filtered_dat
+    }
+  )
+}
+
+
+# a loop to produce the final harmon threatt model tables
+for (i in seq_along(cont.y.var)) {
+  
+  # Create the file and assign them to objects named such that we can retrieve all of the ones we want later.
+  
+  assign(
+    paste0("harmonthreatt.", cont.y.var[i]), 
+    
+    # Generate the contents of the objects using our function.
+    {
+      # Extract the variable name without the "sum_" prefix
+      var_name <- sub("^sum_", "", cont.y.var[i])
+      
+      # Filter the dataset based on the condition
+      filtered_dat <- dat %>%
+        filter(get(paste0("sum_", var_name)) > 0)  
+      
+      # Use the filtered dataset in the analysis
+      harmonthreattmodeltable(filtered_dat, cont.y.var[i],"FGenus")
+    }
+  )
+}
+```
+
+```{r}
+#| label: saving_harmon_threatt_tables_and_respective_datasets
+
+
+# Get a list of all objects in the environment
+all_objects <- ls()
+
+# Filter objects that begin with the string "harmonthreatt."
+harmonthreatttables <- grep("^harmonthreatt\\.", all_objects, value = TRUE)
+
+# Create a list of the selected objects
+harmonthreatttables_list <- mget(harmonthreatttables)
+
+# save(
+#   harmonthreatttables_list,
+#   file = here::here("data",
+#               "cleaned.data",
+#               "beespeciesharmonthreatttables.RData"))
+
+
+# Write the list of data frames to an Excel file
+
+ # writexl::write_xlsx(harmonthreatttables_list,
+ #                    here("data",
+ #                        "summarized.data",
+ #                        "genuslevelharmonthreatttables.allbeespecies.samplesize10.xlsx"))
+
+
+# Filter objects that end with the string "filtered_data"
+beespeciesdatasubsets <- grep("filtered_data", all_objects, value = TRUE)
+
+# Create a list of the selected objects
+beespeciesdatasubsets_list <- mget(beespeciesdatasubsets)
+
+
+# save(
+#   beespeciesdatasubsets_list,
+#   file = here::here("data",
+#               "cleaned.data",
+#               "beespeciesdatasubsets.RData"))
+
+# writexl::write_xlsx(beespeciesdatasubsets_list,
+#                    here("data",
+#                        "cleaned.data",
+#                        "beespeciesdatasubsets.xlsx"))
+
+
+```
+
+#### Pilot Analysis Table
+
+```{r}
+#| label: PILOT ANALYSIS: DATAFRAME PREP 
+
+# Specify the additional columns you want to select
+additional_columns  <- names(dplyr::select(cleanedgenusleveldataset,
+                                           ID:Family))
+
+######################
+
+# Iterate through the list and extract the relevant species column
+result <- lapply(names(beespeciesdatasubsets_list), function(df_name) {
+  # Extract the column name without the ".filtered_data" suffix
+  column_name <- sub("\\.filtered_data$", "", df_name)
+  
+  # concatonate your additional column and species columns
+  selected_columns <- c(additional_columns, column_name)
+  
+  # Extract the specified columns
+  selected_data <- beespeciesdatasubsets_list[[df_name]][, selected_columns, drop = FALSE]
+  
+  return(selected_data)
+})
+
+######################
+
+#renaming the dataframes within the list
+colnames <- lapply(names(beespeciesdatasubsets_list), function(df_name) {
+  # Extract the column name without the ".filtered_data" suffix
+  column_name <- sub("\\.filtered_data$", "", df_name)
+  return(column_name)
+})
+
+renamed_filtered_dataframes <- setNames(result, colnames)
+
+######################
+
+# Create and apply a function to rename the 23rd column to "Count"
+
+# Create the function 
+rename_column <- function(dataset) {
+  colnames(dataset)[20] <- "Count"
+  return(dataset)
+}
+
+# Apply the function to each dataset in the list
+dataframesforpilotanalysis <- lapply(renamed_filtered_dataframes, rename_column)
+
+######################
+# Create the SumofCount, PropBees, and BScore columns! 
+
+finaldataframesforpilotanalysis <- map(
+  dataframesforpilotanalysis,
+  function(df) df %>%
+    group_by(SurveyNum) %>%
+    mutate(SumofCount = sum(Count)) %>%
+    ungroup() %>%
+    mutate(PropBees = Count /SumofCount) %>%
+    mutate(BeeScore = PropBees * corrFloralRank) 
+)
+
+# save(
+#   finaldataframesforpilotanalysis,
+#   file = here::here("data",
+#               "cleaned.data",
+#               "dataframesforpilotanalysistables.RData"))
+
+#writexl::write_xlsx(finaldataframesforpilotanalysis,
+#                   here("data",
+#                       "cleaned.data", 
+#                       "datasetsforpilotanalysis.xlsx")) 
+
+# Plug in the list of final datasheets into the pilot analysis table
+
+finalpilotanalysistables <- map(finaldataframesforpilotanalysis,
+                              ~generalpilotanalysistable(., "FGenus"))
+
+# save(
+#   finalpilotanalysistables,
+#   file = here::here("data",
+#               "cleaned.data",
+#               "finalpilotanalysistables.RData"))
+
+
+# writexl::write_xlsx(finalpilotanalysistables,
+#                   here("data",
+#                       "summarized.data",
+#                       "genuslevelpilotanalysistables.allbeespecies.xlsx"))
+```
+
+@tbl-pilot_analysis explained:
+
+*NumberSurveys* - The number of surveys that a flower genus appeared in.
+
+*Avg.Corr.RankAvg.FloralRank* - Average corrected rank-average of floral rank. Here we took the rank-average of floral rank on a per survey basis, and then "corrected" that value by scaling it between 0 and 10 with the following calculation:$$CorrRankAvgFlRank = RankAvgFloralRank * 10/(max(RankAvgFloralRank))$$
+
+The value displayed here is the average of this value across all surveys.
+
+*AvgBBCount* - Average bumble bee count - Total number of bumble bees found on a flower genus across all surveys, divided by the total number of surveys that the flower genus appeared in.
+
+*AvgCorrBBCount* - Average corrected bumble bee count. The number of bumble bees on a flower genus in one survey, divided by the total number of bumble bees in that survey. The value displayed here is the average of this value across all surveys.
+
+*BBScore.CorrRankAvgFlRankXCorrBBCount* - Average of Adjusted bumble bee count times adjusted floral rank - Bumble bee count multiplied by adjusted floral rank on a per survey basis. This value accounts for both floral abundance and bee visitation, with highest numbers representing plants with lots of bees despite low abundance and lowest numbers representing plants with few visitations despite high abundance.
+
+#### Combined Summary Table
+
+The "preference" metrics include:
+
+a)  ProportionSurveysWithVisitation: Number of surveys with at least one bumble bee visit) / (total number of surveys with the plant genus
+
+b)  BBScore.CorrRankAvgFlRankXCorrBBCount - Derived from Sam and Jenan's pilot analysis method
+
+c)  JarrodModel.BBScore - vRank derived from Fowler adapted Harmon-Threatt model.
+
+```{r}
+#| label: tbl-combined_summary
+#| warning: false
+#| code-fold: true
+#| tbl-cap: A compilation of various "preference" metrics and a couple key values involved in their creation. 
+
+library(readxl)
+unfilteredBombusAndXyloCombinedSummaryTables <- read_xlsx(here("data",
+                                             "summarized.data", 
+                                             "Test.UpdatesToHarmonThreattModel.BombusAndXylocopaGenusLevelSummaryTables.xlsx")) 
+
+test.filteredcolumnsforcomparison <- finalpilotanalysistables[["AllBombus"]] %>%
+  select(c(FGenus, NumberSurveys, AvgBeeScore, BulkBeeScore)) %>%
+  rename_with(~paste0(., ".filt"))
+
+
+combinedsummarytable.AllBombus <-
+  unfilteredBombusAndXyloCombinedSummaryTables %>%
+  dplyr::left_join(test.filteredcolumnsforcomparison, by = c("FGenus" = "FGenus.filt"))
+
+writexl::write_xlsx(combinedsummarytable.AllBombus,
+                    here("data",
+                        "summarized.data", 
+                        "BombusGenusLevelSummaryTable.Testof5orMoreBeeFilter.xlsx")) 
+
+
+combinedsummarytable.AllXylocopa <-
+finalpilotanalysistables[["AllXylocopa"]] %>%
+  dplyr::left_join(harmonthreatt.AllXylocopa, by = "FGenus") %>%
+  dplyr::select(c(FGenus:BulkBeeScore, vRank)) %>% #remove all the other Harmon-Threatt columns except vRank)
+  dplyr::rename("NumberSurveys" = "NumberSurveys.x") %>%
+  dplyr::rename("Fowler.HarmonThreattModel.vRank" = "vRank")
+
+```
+
+```{r}
+#| label: saving_summary_tables_out
+#| warning: false
+#| code-fold: true
+
+combined.summary.tables.list <-
+  list(
+    "combinedsummarytable.AllBombus" = combinedsummarytable.AllBombus,
+    "combinedsummarytable.AllXylocopa" = combinedsummarytable.AllXylocopa
+  )
+
+# writexl::write_xlsx(combined.summary.tables.list,
+#                    here("data",
+#                        "summarized.data", 
+#                        "BombusAndXylocopaGenusLevelSummaryTables.xlsx")) 
+
+
+```
